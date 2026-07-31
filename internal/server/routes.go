@@ -1,6 +1,7 @@
 package server
 
 import (
+	"budget_planner/internal/auth"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -9,7 +10,7 @@ import (
 
 func (s *Server) RegisterRoutes() http.Handler {
 	e := echo.New()
-	e.Use(middleware.Logger())
+	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())
 
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
@@ -20,6 +21,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 		MaxAge:           300,
 	}))
 
+	auth.RegisterRoutes(e)
 	e.GET("/", s.HelloWorldHandler)
 
 	return e
