@@ -34,3 +34,9 @@ type Transaction struct {
 	Amount       float64
 	Remarks      *string
 }
+
+type UserBudgetOverview struct {
+	Type        string
+	Name        string
+	AmountSpent float64
+}

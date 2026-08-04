@@ -22,7 +22,6 @@ func AuthMiddleware(dbService database.DBService) echo.MiddlewareFunc {
 				fmt.Println("error", err)
 				return util.HttpException(500, err.Error(), nil)
 			}
-			fmt.Println("service", dbService)
 
 			user, err := dbService.Queries().GetUserById(claims.Id)
 

@@ -2,7 +2,8 @@ package server
 
 import (
 	"budget_planner/internal/auth"
-	"budget_planner/internal/budget"
+	budget "budget_planner/internal/user_budget"
+	txn "budget_planner/internal/user_transaction"
 	"net/http"
 
 	"github.com/labstack/echo/v5"
@@ -24,6 +25,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	auth.RegisterRoutes(e)
 	budget.RegisterRoutes(e)
+	txn.RegisterRoutes(e)
 	e.GET("/", s.HelloWorldHandler)
 
 	return e

@@ -3,6 +3,9 @@ package database
 import (
 	"budget_planner/util"
 	"context"
+	"log"
+	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -162,4 +165,68 @@ func (q Queries) GetUserByEmail(email string) (*User, error) {
 	}
 
 	return &users[0], nil
+}
+
+func (q Queries) CreateTransaction(transaction Transaction) error {
+	transactionId := uuid.NewString()
+	item := map[string]types.AttributeValue{
+		"Id":               &types.AttributeValueMemberS{Value: transactionId},
+		"UserId":           &types.AttributeValueMemberS{Value: transaction.UserId},
+		"Time":             &types.AttributeValueMemberS{Value: strconv.FormatInt(transaction.Time.Unix(), 10)},
+		"CategoryType":     &types.AttributeValueMemberS{Value: transaction.CategoryType},
+		"CategoryName":     &types.AttributeValueMemberS{Value: transaction.CategoryName},
+		"Amount":           &types.AttributeValueMemberN{Value: util.FloatToString(transaction.Amount)},
+	}
+	if transaction.Remarks != nil {
+		item["Remarks"] = &types.AttributeValueMemberS{Value: *transaction.Remarks}
+	}
+
+	_, err := q.dbClient.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("Transaction"),
+		Item:      item,
+	})
+	return err
+}
+
+func (q Queries) GetTransactionsByUserAndDateRange(userId string, startDate, endDate time.Time) ([]Transaction, error) {
+	var transactions []Transaction
+	startUnix := strconv.FormatInt(startDate.Unix(), 10)
+	endUnix := strconv.FormatInt(endDate.Unix(), 10)
+
+	log.Println("start", startUnix, "end", endUnix)
+
+	filter := expression.And(
+		expression.GreaterThanEqual(expression.Name("Time"), expression.Value(startUnix)),
+		expression.LessThanEqual(expression.Name("Time"), expression.Value(endUnix)),
+	)
+	expr, err := expression.NewBuilder().WithFilter(filter).Build()
+	if err != nil {
+		return nil, err
+	}
+
+	attrValues := expr.Values()
+	attrValues[":userId"] = &types.AttributeValueMemberS{Value: userId}
+
+	result, err := q.dbClient.Query(context.Background(), &dynamodb.QueryInput{
+		TableName:                 aws.String("Transaction"),
+		KeyConditionExpression:    aws.String("UserId = :userId"),
+		FilterExpression:          expr.Filter(),
+		ExpressionAttributeValues: attrValues,
+		ExpressionAttributeNames:  expr.Names(),
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = attributevalue.UnmarshalListOfMaps(result.Items, &transactions)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(transactions) == 0 {
+		return []Transaction{}, nil
+	}
+
+	return transactions, nil
 }
