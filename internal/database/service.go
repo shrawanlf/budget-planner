@@ -15,6 +15,7 @@ var (
 type DBService interface {
 	DB() *dynamodb.Client
 	Close() error
+	Queries() Queries
 }
 
 type service struct {
@@ -22,23 +23,27 @@ type service struct {
 }
 
 func NewService() DBService {
-	sdkConfig, err := config.LoadDefaultConfig(context.Background())
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	if client != nil {
 		return service{
 			dbClient: client,
 		}
 	}
 
-	client := dynamodb.NewFromConfig(sdkConfig)
+	sdkConfig, err := config.LoadDefaultConfig(context.Background())
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client = dynamodb.NewFromConfig(sdkConfig)
 
 	return service{
 		dbClient: client,
 	}
+}
+
+func (s service) Queries() Queries {
+	return newQueries(s.dbClient)
 }
 
 func (s service) DB() *dynamodb.Client {

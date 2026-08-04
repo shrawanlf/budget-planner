@@ -2,7 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
