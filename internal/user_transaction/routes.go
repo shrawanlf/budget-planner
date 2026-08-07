@@ -3,8 +3,9 @@ package transaction
 import (
 	"budget_planner/internal/database"
 	"budget_planner/internal/middleware"
+	"budget_planner/internal/workers"
 	"budget_planner/util"
-	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -12,8 +13,13 @@ import (
 )
 
 var databaseService = database.NewService()
+var notificationWorkerChannle = make(chan database.Transaction, 100)
+var userBudgetWorkerChannel = make(chan database.Transaction, 100)
 
-var transactionService = NewService(databaseService)
+var transactionService = NewService(
+	databaseService,
+	workers.NewNotificationWorker(databaseService, &notificationWorkerChannle),
+	workers.NewUserBudgetWorker(databaseService, &userBudgetWorkerChannel))
 
 type TransactionDto struct {
 	CategoryName string  `json:"categoryName"`
@@ -25,7 +31,7 @@ type TransactionDto struct {
 type CreateTransactionDto struct {
 	Transaction TransactionDto
 	UserId      string
-	Time        time.Time
+	Time        int64
 }
 
 func RegisterRoutes(e *echo.Echo) {
@@ -33,6 +39,10 @@ func RegisterRoutes(e *echo.Echo) {
 	transactionGrp.Use(middleware.AuthMiddleware(databaseService))
 	transactionGrp.POST("/", handleCreateTransaction)
 	transactionGrp.GET("/", handleGetTransactions)
+
+	notificationGrp := e.Group("/notifications")
+	notificationGrp.Use(middleware.AuthMiddleware(databaseService))
+	notificationGrp.GET("/", handleGetNotifications)
 }
 
 func handleGetTransactions(c *echo.Context) error {
@@ -54,14 +64,25 @@ func handleGetTransactions(c *echo.Context) error {
 		return util.MakeErrorRes(c, util.HttpException(http.StatusBadRequest, "Invalid endDate format, use YYYY-MM-DD", nil))
 	}
 
+	end = end.Add(time.Hour * 24)
+
 	if start.After(end) {
 		return util.MakeErrorRes(c, util.HttpException(http.StatusBadRequest, "startDate must be before endDate", nil))
 	}
 
-	fmt.Println(start, end)
+	// Optional category drill-down filters
+	categoryType := c.QueryParam("categoryType")
+	categoryName := c.QueryParam("categoryName")
 
-	transactions, err := transactionService.GetTransactions(userId, start, end)
+	var transactions []database.Transaction
+	if categoryType != "" && categoryName != "" {
+		transactions, err = transactionService.GetTransactionsByCategory(userId, start, end, categoryType, categoryName)
+	} else {
+		transactions, err = transactionService.GetTransactions(userId, start, end)
+	}
+
 	if err != nil {
+		log.Println(err)
 		return util.MakeErrorRes(c, util.HttpException(http.StatusInternalServerError, "Failed to fetch transactions", nil))
 	}
 
@@ -83,7 +104,7 @@ func handleCreateTransaction(c *echo.Context) error {
 	createTxnDto := CreateTransactionDto{
 		Transaction: transactionDto,
 		UserId:      userId,
-		Time:        time.Now(),
+		Time:        time.Now().Unix(),
 	}
 
 	if err := transactionService.CreateTransaction(createTxnDto); err != nil {
@@ -91,4 +112,16 @@ func handleCreateTransaction(c *echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, util.FormatRes(true, "Transaction created successfully", nil))
+}
+
+func handleGetNotifications(c *echo.Context) error {
+	userId := c.Get("userId").(string)
+
+	notifications, err := transactionService.GetNotifications(userId)
+	if err != nil {
+		log.Println(err)
+		return util.MakeErrorRes(c, util.HttpException(http.StatusInternalServerError, "Failed to fetch notifications", nil))
+	}
+
+	return c.JSON(http.StatusOK, util.FormatRes(true, "Notifications fetched successfully", notifications))
 }

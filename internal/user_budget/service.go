@@ -2,6 +2,7 @@ package budget
 
 import (
 	"budget_planner/internal/database"
+	"budget_planner/util"
 )
 
 type service struct {
@@ -14,21 +15,44 @@ func NewService(dbService database.DBService) *service {
 	}
 }
 
+func (as service) GetBudgetExpenses(userId string, date string) (database.UserBudgetExpense, error) {
+	var expense database.UserBudgetExpense
+	expense, err := as.dbService.Queries().GetUserBudgetExpensesForDate(userId, date)
+
+	if err != nil {
+		return expense, err
+	}
+
+	if expense.Expenses == nil {
+		return expense, nil
+	}
+
+	return expense, nil
+}
+
 func (as service) ActiveBudget(userId string) (*[]database.Budget, error) {
-	user, err := as.dbService.Queries().GetUserById(userId)
+	expense, err := as.dbService.Queries().GetUserBudgetExpensesForDate(userId, util.GetCurrentMonth())
 
 	if err != nil {
 		return nil, err
 	}
 
-	return user.Budget, nil
+	if expense.Expenses == nil {
+		user, err := as.dbService.Queries().GetUserById(userId)
+		if err != nil {
+			return nil, err
+		}
+		expense.Expenses = user.Budget
+	}
+
+	return expense.Expenses, nil
 }
 
-func (as service) GetBudgetCategories(categoryType *string) ([]database.Category, error) {
+func (as service) GetBudgetCategories(categoryType string) ([]database.Category, error) {
 	var categories []database.Category
 	var err error
-	if categoryType != nil {
-		categories, err = as.dbService.Queries().GetCategoryByType(*categoryType)
+	if len(categoryType) > 0 {
+		categories, err = as.dbService.Queries().GetCategoryByType(categoryType)
 		if err != nil {
 			return nil, err
 		}

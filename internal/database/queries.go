@@ -25,6 +25,66 @@ func newQueries(dbClient *dynamodb.Client) Queries {
 	}
 }
 
+func (q Queries) GetUserBudgetExpensesForDate(userId string, date string) (UserBudgetExpense, error) {
+	var expenses UserBudgetExpense
+	result, err := q.dbClient.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("UserBudgetExpenses"),
+		Key: map[string]types.AttributeValue{
+			"UserId": &types.AttributeValueMemberS{Value: userId},
+			"Date":   &types.AttributeValueMemberS{Value: date},
+		},
+	})
+
+	if err != nil {
+		return expenses, err
+	}
+
+	err = attributevalue.UnmarshalMap(result.Item, &expenses)
+	if err != nil {
+		return expenses, err
+	}
+
+	return expenses, nil
+}
+
+func (q Queries) SetUserBudgetExpense(userId string, budget UserBudgetExpense) error {
+	update := expression.Set(expression.Name("Expenses"), expression.Value(budget.Expenses))
+	expr, err := expression.NewBuilder().WithUpdate(update).Build()
+
+	if err != nil {
+		return err
+	}
+
+	_, err = q.dbClient.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName: aws.String("UserBudgetExpenses"),
+		Key: map[string]types.AttributeValue{
+			"UserId": &types.AttributeValueMemberS{Value: userId},
+			"Date":   &types.AttributeValueMemberS{Value: budget.Date},
+		},
+		ReturnValues:              types.ReturnValueUpdatedNew,
+		UpdateExpression:          expr.Update(),
+		ExpressionAttributeValues: expr.Values(),
+		ExpressionAttributeNames:  expr.Names(),
+	})
+
+	return nil
+}
+
+func (q Queries) CreateNotification(userId, title, message string) error {
+	notificationId := uuid.NewString()
+	_, err := q.dbClient.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("Notification"),
+		Item: map[string]types.AttributeValue{
+			"Id":      &types.AttributeValueMemberS{Value: notificationId},
+			"UserId":  &types.AttributeValueMemberS{Value: userId},
+			"Title":   &types.AttributeValueMemberS{Value: title},
+			"Message": &types.AttributeValueMemberS{Value: message},
+			"Time":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+		},
+	})
+	return err
+}
+
 func (q Queries) SetUserBudget(userId string, budgets []Budget) error {
 	update := expression.Set(expression.Name("Budget"), expression.Value(budgets))
 	expr, err := expression.NewBuilder().WithUpdate(update).Build()
@@ -38,8 +98,24 @@ func (q Queries) SetUserBudget(userId string, budgets []Budget) error {
 		Key: map[string]types.AttributeValue{
 			"Id": &types.AttributeValueMemberS{Value: userId},
 		},
-		ReturnValues: types.ReturnValueUpdatedNew,
-		UpdateExpression: expr.Update(),
+		ReturnValues:              types.ReturnValueUpdatedNew,
+		UpdateExpression:          expr.Update(),
+		ExpressionAttributeValues: expr.Values(),
+		ExpressionAttributeNames:  expr.Names(),
+	})
+
+	if err != nil {
+		return err
+	}
+
+	_, err = q.dbClient.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName: aws.String("UserBudgetExpenses"),
+		Key: map[string]types.AttributeValue{
+			"UserId": &types.AttributeValueMemberS{Value: userId},
+			"Date":   &types.AttributeValueMemberS{Value: util.GetCurrentMonth()},
+		},
+		ReturnValues:              types.ReturnValueUpdatedNew,
+		UpdateExpression:          expr.Update(),
 		ExpressionAttributeValues: expr.Values(),
 		ExpressionAttributeNames:  expr.Names(),
 	})
@@ -88,9 +164,6 @@ func (q Queries) GetAllCategories() ([]Category, error) {
 		return nil, err
 	}
 
-	if len(categories) == 0 {
-		return nil, nil
-	}
 	return categories, nil
 }
 
@@ -116,7 +189,7 @@ func (q Queries) GetUserById(userId string) (*User, error) {
 	return &user, nil
 }
 
-func (q Queries) CreateUser(email string, password string) (*User, error) {
+func (q Queries) CreateUser(email, password, name, phone string) (*User, error) {
 	var user *User = &User{}
 	hashedPassword, err := util.Hash([]byte(password))
 	if err != nil {
@@ -124,15 +197,26 @@ func (q Queries) CreateUser(email string, password string) (*User, error) {
 	}
 	user.Password = hashedPassword
 	user.Email = email
+	user.Name = name
+	user.Phone = phone
 	user.Id = uuid.NewString()
+
+	item := map[string]types.AttributeValue{
+		"Id":       &types.AttributeValueMemberS{Value: user.Id},
+		"Email":    &types.AttributeValueMemberS{Value: user.Email},
+		"Password": &types.AttributeValueMemberS{Value: user.Password},
+	}
+
+	if name != "" {
+		item["Name"] = &types.AttributeValueMemberS{Value: name}
+	}
+	if phone != "" {
+		item["Phone"] = &types.AttributeValueMemberS{Value: phone}
+	}
 
 	_, err = q.dbClient.PutItem(context.Background(), &dynamodb.PutItemInput{
 		TableName: aws.String("User"),
-		Item: map[string]types.AttributeValue{
-			"Id":       &types.AttributeValueMemberS{Value: user.Id},
-			"Email":    &types.AttributeValueMemberS{Value: user.Email},
-			"Password": &types.AttributeValueMemberS{Value: user.Password},
-		},
+		Item:      item,
 	})
 
 	if err != nil {
@@ -170,12 +254,12 @@ func (q Queries) GetUserByEmail(email string) (*User, error) {
 func (q Queries) CreateTransaction(transaction Transaction) error {
 	transactionId := uuid.NewString()
 	item := map[string]types.AttributeValue{
-		"Id":               &types.AttributeValueMemberS{Value: transactionId},
-		"UserId":           &types.AttributeValueMemberS{Value: transaction.UserId},
-		"Time":             &types.AttributeValueMemberS{Value: strconv.FormatInt(transaction.Time.Unix(), 10)},
-		"CategoryType":     &types.AttributeValueMemberS{Value: transaction.CategoryType},
-		"CategoryName":     &types.AttributeValueMemberS{Value: transaction.CategoryName},
-		"Amount":           &types.AttributeValueMemberN{Value: util.FloatToString(transaction.Amount)},
+		"Id":           &types.AttributeValueMemberS{Value: transactionId},
+		"UserId":       &types.AttributeValueMemberS{Value: transaction.UserId},
+		"Time":         &types.AttributeValueMemberS{Value: transaction.Time},
+		"CategoryType": &types.AttributeValueMemberS{Value: transaction.CategoryType},
+		"CategoryName": &types.AttributeValueMemberS{Value: transaction.CategoryName},
+		"Amount":       &types.AttributeValueMemberN{Value: util.FloatToString(transaction.Amount)},
 	}
 	if transaction.Remarks != nil {
 		item["Remarks"] = &types.AttributeValueMemberS{Value: *transaction.Remarks}
@@ -229,4 +313,80 @@ func (q Queries) GetTransactionsByUserAndDateRange(userId string, startDate, end
 	}
 
 	return transactions, nil
+}
+
+// GetTransactionsByCategory fetches transactions for a user within a date range
+// filtered to a specific CategoryType and CategoryName — used for the expense drill-down.
+func (q Queries) GetTransactionsByCategory(userId string, startDate, endDate time.Time, categoryType, categoryName string) ([]Transaction, error) {
+	var transactions []Transaction
+	startUnix := strconv.FormatInt(startDate.Unix(), 10)
+	endUnix := strconv.FormatInt(endDate.Unix(), 10)
+
+	filter := expression.And(
+		expression.GreaterThanEqual(expression.Name("Time"), expression.Value(startUnix)),
+		expression.LessThanEqual(expression.Name("Time"), expression.Value(endUnix)),
+		expression.Equal(expression.Name("CategoryType"), expression.Value(categoryType)),
+		expression.Equal(expression.Name("CategoryName"), expression.Value(categoryName)),
+	)
+	expr, err := expression.NewBuilder().WithFilter(filter).Build()
+	if err != nil {
+		return nil, err
+	}
+
+	attrValues := expr.Values()
+	attrValues[":userId"] = &types.AttributeValueMemberS{Value: userId}
+
+	result, err := q.dbClient.Query(context.Background(), &dynamodb.QueryInput{
+		TableName:                 aws.String("Transaction"),
+		KeyConditionExpression:    aws.String("UserId = :userId"),
+		FilterExpression:          expr.Filter(),
+		ExpressionAttributeValues: attrValues,
+		ExpressionAttributeNames:  expr.Names(),
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = attributevalue.UnmarshalListOfMaps(result.Items, &transactions)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(transactions) == 0 {
+		return []Transaction{}, nil
+	}
+
+	return transactions, nil
+}
+
+func (q Queries) GetUserNotifications(userId string) ([]Notification, error) {
+	var notifications []Notification
+	expr := expression.Key("UserId").Equal(expression.Value(userId))
+	bld, err := expression.NewBuilder().WithKeyCondition(expr).Build()
+
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := q.dbClient.Query(context.Background(), &dynamodb.QueryInput{
+		TableName:                 aws.String("Notification"),
+		KeyConditionExpression:    aws.String("UserId = :userId"),
+		ExpressionAttributeValues: bld.Values(),
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = attributevalue.UnmarshalListOfMaps(result.Items, &notifications)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(notifications) == 0 {
+		return []Notification{}, nil
+	}
+
+	return notifications, nil
 }

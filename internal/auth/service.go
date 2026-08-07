@@ -31,6 +31,7 @@ func (as service) Login(dto loginDto) (LoginResponse, error) {
 		return res, err
 	}
 	res.Token = token
+	res.User = *user
 	return res, nil
 }
 
@@ -45,7 +46,7 @@ func (as service) Register(dto registerDto) error {
 		return util.HttpException(400, "User by this email already exists", nil)
 	}
 
-	_, err = as.dbService.Queries().CreateUser(dto.Email, dto.Password)
+	_, err = as.dbService.Queries().CreateUser(dto.Email, dto.Password, dto.Name, dto.Phone)
 
 	if err != nil {
 		return err

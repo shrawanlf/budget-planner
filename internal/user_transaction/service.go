@@ -2,17 +2,23 @@ package transaction
 
 import (
 	"budget_planner/internal/database"
+	"budget_planner/pkg/worker"
 	"fmt"
+	"strconv"
 	"time"
 )
 
 type service struct {
-	dbService database.DBService
+	dbService          database.DBService
+	notificationWorker *worker.Worker[database.Transaction]
+	userBudgetWorker   *worker.Worker[database.Transaction]
 }
 
-func NewService(dbService database.DBService) *service {
+func NewService(dbService database.DBService, notificationWorker *worker.Worker[database.Transaction], userBudgetWorker *worker.Worker[database.Transaction]) *service {
 	return &service{
-		dbService: dbService,
+		dbService:          dbService,
+		notificationWorker: notificationWorker,
+		userBudgetWorker:   userBudgetWorker,
 	}
 }
 
@@ -42,15 +48,36 @@ func (s *service) CreateTransaction(createTxnDto CreateTransactionDto) error {
 
 	transaction := database.Transaction{
 		UserId:       createTxnDto.UserId,
-		Time:         createTxnDto.Time,
+		Time:         strconv.FormatInt(createTxnDto.Time, 10),
 		CategoryType: createTxnDto.Transaction.CategoryType,
 		CategoryName: createTxnDto.Transaction.CategoryName,
 		Amount:       createTxnDto.Transaction.Amount,
 		Remarks:      createTxnDto.Transaction.Remarks,
 	}
-	return s.dbService.Queries().CreateTransaction(transaction)
+	err := s.dbService.Queries().CreateTransaction(transaction)
+	if err != nil {
+		return err
+	}
+
+	// NOTE: No need to process transactions for income type
+	if transaction.CategoryType == "Income" {
+		return nil
+	}
+
+	worker.PushDataToWorker(s.notificationWorker, transaction)
+	worker.PushDataToWorker(s.userBudgetWorker, transaction)
+
+	return nil
 }
 
 func (s *service) GetTransactions(userId string, startDate, endDate time.Time) ([]database.Transaction, error) {
 	return s.dbService.Queries().GetTransactionsByUserAndDateRange(userId, startDate, endDate)
+}
+
+func (s *service) GetTransactionsByCategory(userId string, startDate, endDate time.Time, categoryType, categoryName string) ([]database.Transaction, error) {
+	return s.dbService.Queries().GetTransactionsByCategory(userId, startDate, endDate, categoryType, categoryName)
+}
+
+func (s *service) GetNotifications(userId string) ([]database.Notification, error) {
+	return s.dbService.Queries().GetUserNotifications(userId)
 }

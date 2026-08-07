@@ -4,7 +4,6 @@ import (
 	"budget_planner/internal/database"
 	"budget_planner/internal/middleware"
 	"budget_planner/util"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -12,15 +11,15 @@ import (
 )
 
 type BudgetDto struct {
-	Type   string `json:"type"`
-	Name   string `json:"name"`
+	Type   string  `json:"type"`
+	Name   string  `json:"name"`
 	Amount float64 `json:"amount"`
 }
 
 type SetUserBudgetDto struct {
 	Budget []BudgetDto
 	UserId string
-} 
+}
 
 var databaseService = database.NewService()
 
@@ -30,13 +29,27 @@ func RegisterRoutes(e *echo.Echo) {
 	budgetGrp.Use(middleware.AuthMiddleware(databaseService))
 	budgetGrp.POST("/", handleSetBudget)
 	budgetGrp.GET("/active", handleGetMeBudget)
+	budgetGrp.GET("/expenses-by-date", handleGetBudgetExpenses)
 }
 
 var budgetService = NewService(databaseService)
 
+func handleGetBudgetExpenses(c *echo.Context) error {
+	userId := c.Get("userId").(string)
+	date := c.QueryParam("date")
+
+	expense, err := budgetService.GetBudgetExpenses(userId, date)
+
+	if err != nil {
+		log.Println(err)
+		return util.MakeErrorRes(c, err)
+	}
+
+	return c.JSON(http.StatusOK, util.FormatRes(true, "success", expense))
+}
+
 func handleGetMeBudget(c *echo.Context) error {
 	userId := c.Get("userId").(string)
-	fmt.Println(userId)
 	budget, err := budgetService.ActiveBudget(userId)
 
 	if err != nil {
@@ -45,7 +58,7 @@ func handleGetMeBudget(c *echo.Context) error {
 	}
 
 	if budget == nil {
-		return util.MakeErrorRes(c, util.HttpException(404, "No budget configured for user", nil))
+		return util.MakeErrorRes(c, util.HttpException(400, "No budget configured for user", nil))
 	}
 
 	return c.JSON(http.StatusOK, util.FormatRes(true, "success", budget))
@@ -54,7 +67,7 @@ func handleGetMeBudget(c *echo.Context) error {
 func handleGetBudgetCategories(c *echo.Context) error {
 	categoryType := c.QueryParam("type")
 
-	categories, err := budgetService.GetBudgetCategories(&categoryType)
+	categories, err := budgetService.GetBudgetCategories(categoryType)
 
 	if err != nil {
 		return util.MakeErrorRes(c, err)
